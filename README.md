@@ -27,21 +27,22 @@ Telegram Bot → n8n (orchestrator, 24/7) → Router LLM → Local LLM | Externa
 - **External AI:** Claude API (Haiku for cheap/fast tasks, Sonnet for higher-quality content)
 - **Hosting:** Hetzner Cloud (orchestrator VM, always-on)
 
-Full architecture, deployment plan, task breakdown, and token/cost estimates: see [`PLAN.md`](./PLAN.md).
+Full architecture, deployment plan, task breakdown, and token/cost estimates: see [`docs/PLAN.md`](docs/PLAN.md). For how a message actually moves through the live system today (routing, RAG retrieval, reminders/projects, cron jobs), see [`docs/MESSAGE_FLOW.md`](docs/MESSAGE_FLOW.md).
 
 ## Status
 
-🚧 In development — currently in **Phase 1: Infrastructure setup**.
+🚧 In development — Phases 1–4 (infrastructure, router/local LLM, memory/RAG, reminders & projects) are live and working end-to-end. Remaining: project deadline notifications, and Phase 5 (heavy task routing to external AI APIs, presentations, content drafts) hasn't started yet.
 
 ## Repo structure
 
 ```
 .
-├── PLAN.md            # Full architecture & project plan
-├── docker-compose.yml # n8n + Postgres + Qdrant + Caddy
-├── n8n/                # Exported n8n workflows
-├── db/schema.sql       # Database schema
-└── router-prompts/     # Router & task-classification prompts
+├── docs/
+│   ├── PLAN.md            # Full architecture & project plan
+│   └── MESSAGE_FLOW.md    # How a message moves through the live system
+├── docker-compose.yml     # n8n + Postgres + Qdrant + Caddy
+├── db/schema.sql          # Database schema
+└── router-prompts/        # Router, local-model, and extraction prompts
 ```
 
 ## Requirements
@@ -54,4 +55,4 @@ Full architecture, deployment plan, task breakdown, and token/cost estimates: se
 
 ## Roadmap
 
-See [`PLAN.md`](./PLAN.md) for the full phased task list (infrastructure → router/local LLM → memory/RAG → projects & reminders → heavy task routing → Gmail/Calendar integration).
+See [`docs/PLAN.md`](docs/PLAN.md) for the full phased task list (infrastructure → router/local LLM → memory/RAG → projects & reminders → heavy task routing → Gmail/Calendar integration).

@@ -22,6 +22,11 @@ Rules:
 - "content" applies ONLY when the user wants a message/email drafted for someone else to read or receive. Analysis, summaries, jokes, and general writing that isn't addressed to a third party are NOT content — classify those as "heavy" (analysis/writing work) or "simple" (small talk/quick request), never default to "content" out of uncertainty.
 - confidence below 0.6 means the downstream system may ask the user to clarify — only go that low when the message is genuinely ambiguous.
 
+Using conversation history:
+- You may be given a "Recent conversation" block before the current message — this is the last few turns exchanged with the same user. Use it to understand short, ambiguous, or reference-dependent follow-ups.
+- If the assistant's last message asked a clarifying/confirming question (e.g. "want to create it as a new project instead?", "could you give me a specific date/time?") and the current message answers or confirms it (e.g. "yes", "bəli", "correct", a specific date), classify with the SAME type as whatever the clarification was about — don't fall back to "simple" just because the current message alone looks like small talk.
+- If there's no "Recent conversation" block, there's no prior context — classify the current message on its own.
+
 Examples:
 
 User: "Tbilisi bileti 20-də açılır, xəbərdar et"
@@ -74,3 +79,17 @@ User: "draft an email to the landlord asking to extend the lease by 2 months"
 
 User: "iş yoldaşıma mesaj yaz, sabahkı görüşü təxirə salmaq istəyirəm"
 {"type": "content", "confidence": 0.9, "reasoning": "message draft addressed to a colleague", "reply": null}
+
+Recent conversation (oldest to newest):
+User: "layihə yaratmaq istəyirəm: yeni sayt dizaynı"
+Assistant: I couldn't find an existing project matching "yeni sayt dizaynı" to update. Want to create it as a new project instead?
+
+Current message: "bəli, yarat"
+{"type": "project", "confidence": 0.9, "reasoning": "confirms creating the project discussed in the previous turn", "reply": null}
+
+Recent conversation (oldest to newest):
+User: "remind me to check the oven"
+Assistant: I got that you want a reminder for "check the oven" but couldn't figure out when — could you give me a specific date/time?
+
+Current message: "in 10 minutes"
+{"type": "reminder", "confidence": 0.9, "reasoning": "provides the missing date/time for the pending reminder", "reply": null}
