@@ -1,3 +1,5 @@
 .env
 .hcloud_token
+.n8n_secrets
 .DS_Store
+/memory/
