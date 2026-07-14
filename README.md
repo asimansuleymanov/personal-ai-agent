@@ -40,6 +40,11 @@ Full architecture, deployment plan, task breakdown, and token/cost estimates: se
 ├── docs/
 │   ├── PLAN.md            # Full architecture & project plan
 │   └── MESSAGE_FLOW.md    # How a message moves through the live system
+├── n8n/
+│   ├── README.md          # How the n8n workflows are generated & deployed
+│   └── workflows/         # Exported workflow JSON (source of truth is generated, not hand-edited)
+├── scripts/
+│   └── build_n8n_workflow.py  # Generates n8n/workflows/telegram-agent.json
 ├── docker-compose.yml     # n8n + Postgres + Qdrant + Caddy
 ├── db/schema.sql          # Database schema
 └── router-prompts/        # Router, local-model, and extraction prompts

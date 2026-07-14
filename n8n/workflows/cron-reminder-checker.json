@@ -1,0 +1,138 @@
+{
+  "updatedAt": "2026-07-10T13:22:57.533Z",
+  "createdAt": "2026-07-10T13:22:57.533Z",
+  "id": "bA0laxKVN1WrmdVs",
+  "name": "Cron - Reminder Checker",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "name": "Every Minute",
+      "id": "every-minute"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, content, due_date FROM tasks WHERE status = 'pending' AND remind_count = 0 AND due_date <= now();"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "name": "Get Due Reminders",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "get-due-reminders"
+    },
+    {
+      "parameters": {
+        "chatId": "5765059635",
+        "text": "=\u23f0 Reminder: *{{$json.content}}*\n\n_[Cron reminder checker]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ],
+      "name": "Send Reminder Notification",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "send-reminder-notification",
+      "webhookId": "25a34eeb-c08c-4a5b-9e72-74bf58c4f031"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tasks SET remind_count = remind_count + 1, last_reminded_at = now() WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('Get Due Reminders').item.json.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "name": "Mark Reminded",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "mark-reminded"
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Get Due Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Due Reminders": {
+      "main": [
+        [
+          {
+            "node": "Send Reminder Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reminder Notification": {
+      "main": [
+        [
+          {
+            "node": "Mark Reminded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodeGroups": [],
+  "tags": []
+}

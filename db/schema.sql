@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS projects (
   type TEXT NOT NULL CHECK (type IN ('work', 'personal', 'travel')),
   description TEXT,
   deadline TIMESTAMPTZ,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'paused')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'paused', 'deleted')),
   priority SMALLINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
   content TEXT NOT NULL,
   due_date TIMESTAMPTZ,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'deleted')),
   remind_count INTEGER NOT NULL DEFAULT 0,
   last_reminded_at TIMESTAMPTZ
 );

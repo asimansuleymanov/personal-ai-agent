@@ -1,0 +1,162 @@
+{
+  "updatedAt": "2026-07-14T09:00:50.879Z",
+  "createdAt": "2026-07-14T09:00:50.879Z",
+  "id": "wvjXgEpVBmyvHVPK",
+  "name": "Cron - Daily Digest",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "name": "Daily 9am Trigger",
+      "id": "daily-9am-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT name, type, deadline FROM projects WHERE status = 'active' ORDER BY deadline NULLS LAST;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "name": "Get Active Projects",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "get-active-projects",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT content, due_date FROM tasks WHERE status = 'pending' AND (due_date IS NULL OR due_date <= now() + interval '2 days') ORDER BY due_date NULLS LAST;"
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "name": "Get Upcoming Tasks",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "get-upcoming-tasks",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const projects = $('Get Active Projects').all().map(item => item.json);\nconst tasks = $input.all().map(item => item.json);\n\nlet text = '\u2600\ufe0f Daily Digest\n\n';\n\nif (projects.length) {\n  text += '*Active Projects:*\n';\n  for (const p of projects) {\n    const deadlineStr = p.deadline ? new Date(new Date(p.deadline).getTime() + 4*60*60*1000).toISOString().slice(0,10) : 'no deadline';\n    text += '- ' + p.name + ' (' + p.type + ') \u2014 due ' + deadlineStr + '\n';\n  }\n} else {\n  text += '_No active projects._\n';\n}\n\ntext += '\n';\n\nif (tasks.length) {\n  text += '*Upcoming Reminders:*\n';\n  for (const t of tasks) {\n    const dueStr = t.due_date ? new Date(new Date(t.due_date).getTime() + 4*60*60*1000).toISOString().slice(0,16).replace('T',' ') : 'no due date';\n    text += '- ' + t.content + ' \u2014 ' + dueStr + ' (Baku time)\n';\n  }\n} else {\n  text += '_No upcoming reminders._\n';\n}\n\nreturn [{ json: { digestText: text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "name": "Build Digest",
+      "id": "build-digest"
+    },
+    {
+      "parameters": {
+        "chatId": "5765059635",
+        "text": "={{$json.digestText}}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ],
+      "name": "Send Digest",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "send-digest",
+      "webhookId": "40d8899a-4aed-4118-ace0-b22ccfa90e80"
+    }
+  ],
+  "connections": {
+    "Daily 9am Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Active Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Projects": {
+      "main": [
+        [
+          {
+            "node": "Get Upcoming Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Upcoming Tasks": {
+      "main": [
+        [
+          {
+            "node": "Build Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest": {
+      "main": [
+        [
+          {
+            "node": "Send Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodeGroups": [],
+  "tags": []
+}

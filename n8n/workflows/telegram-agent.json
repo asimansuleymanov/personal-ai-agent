@@ -1,0 +1,4488 @@
+{
+  "name": "Telegram - Personal AI Agent (router + local model)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "name": "Telegram Trigger",
+      "webhookId": "d020c781-3098-4a23-af8d-f4d0d937fec2",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "03d66a5a-62cb-40c3-a3f5-ab429b802ba2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Authorized User-cond",
+              "leftValue": "={{$json.message.from.id}}",
+              "rightValue": 5765059635,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "name": "Is Authorized User",
+      "id": "c7f2cd5a-096a-47f0-915d-ef47cc76bdea"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        440,
+        260
+      ],
+      "name": "Ignore Unauthorized",
+      "id": "9e00864e-19ff-4165-b87a-5c4576c55da9"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.message.text || '';\nconst azMatch = /^\\/az\\s+/i.test(text);\nconst cleanText = azMatch ? text.replace(/^\\/az\\s+/i, '').trim() : text;\nreturn [{ json: { ...$json, azMode: azMatch, cleanText, startTime: Date.now() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "name": "Detect AZ Tag",
+      "id": "Detect AZ Tag"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT message, response FROM conversation_log ORDER BY created_at DESC LIMIT 6;",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        220
+      ],
+      "name": "Get Recent History",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Get Recent History",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Detect AZ Tag').item.json;\nconst rows = $input.all().map(item => item.json).filter(r => r.message).reverse();\nlet historyText = '';\nif (rows.length) {\n  historyText = 'Recent conversation (oldest to newest):\\n' + rows.map(r => 'User: ' + r.message + '\\nAssistant: ' + (r.response || '')).join('\\n') + '\\n\\n';\n}\nreturn [{ json: { ...prior, historyText } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        220
+      ],
+      "name": "Build History Context",
+      "id": "Build History Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.output[0].choices[0].message.content;\nlet parsed;\ntry { parsed = JSON.parse(raw); } catch (e) { parsed = { type: 'simple', confidence: 0, reasoning: 'router_parse_error', reply: null }; }\nreturn [{ json: { ...$json, ...parsed } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -120
+      ],
+      "name": "Extract Router Result",
+      "id": "Extract Router Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Sorry, the router model is still cold-starting (this can take a while after being idle). Please try again in a minute.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        120
+      ],
+      "name": "Router Timeout Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Router Timeout Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/guadc1rxe929r4/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-3B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a task router for a personal AI assistant. Classify the user's message into exactly one type and return strict JSON \\u2014 nothing else, no markdown fences.\\n\\nOutput format:\\n{\\\"type\\\": \\\"simple|reminder|project|status|heavy|presentation|content\\\", \\\"confidence\\\": 0.0-1.0, \\\"reasoning\\\": \\\"one short phrase\\\", \\\"reply\\\": \\\"...\\\" or null}\\n\\nTypes:\\n- simple: a quick question, small talk, or general knowledge. Answerable without looking anything up.\\n- reminder: creating, updating, or deleting a reminder (something to be nudged about at/by a specific date or time). Covers \\\"remind me...\\\", \\\"cancel that reminder\\\", \\\"delete reminder 4\\\", \\\"change my dentist reminder to 5pm\\\".\\n- project: creating, updating, or deleting a tracked project (work, personal, or travel) \\u2014 status changes, deadline changes, renames, or deletions (\\\"this was added by mistake, delete it\\\", \\\"delete project 3\\\").\\n- status: the user wants to SEE their actual tracked projects and/or reminders/tasks \\u2014 a listing or status check that requires reading real stored data (e.g. \\\"what are my active projects\\\", \\\"give me my reminders\\\", \\\"what's the status of X project\\\", \\\"I have 2 active projects, give me info\\\"). This is a READ, unlike \\\"project\\\"/\\\"reminder\\\" which are WRITES (create/update/delete). If the message contains an action verb that CHANGES something \\u2014 \\\"mark as done\\\", \\\"pause\\\", \\\"resume\\\", \\\"update the deadline\\\", \\\"start tracking\\\", \\\"delete\\\", \\\"cancel\\\", \\\"remove\\\" \\u2014 it's \\\"project\\\" or \\\"reminder\\\", not \\\"status\\\", even if it also mentions status-like words like \\\"done\\\" or \\\"active\\\".\\n- heavy: writing code, deep analysis, or complex creative/reasoning work that needs a stronger model.\\n- presentation: a request for slides or a presentation deck.\\n- content: drafting an email or message the user will review before sending.\\n\\nThe \\\"reply\\\" field:\\n- If type is \\\"simple\\\" AND the question is generic/impersonal (general knowledge, math, jokes, definitions \\u2014 anything you can answer correctly without knowing anything about this specific user), answer it yourself: put a short, direct answer in \\\"reply\\\", ALWAYS written in English regardless of what language the user's message is in.\\n- If type is \\\"simple\\\" BUT the question depends on knowing something about this specific user (their name, job, manager, team, preferences, relationships, past conversations, or anything personal), set \\\"reply\\\" to null. You have no memory of the user \\u2014 you WILL hallucinate a wrong answer if you try. A different, larger model with access to the user's stored profile handles those instead.\\n- For every other type (not \\\"simple\\\"), set \\\"reply\\\" to null. A different, larger model handles those \\u2014 you only classify.\\n- IMPORTANT: never answer \\\"status\\\" questions yourself, even if you think you know the answer from conversation history. You do NOT have access to the real, current list of projects/tasks \\u2014 only a dedicated database lookup does. Guessing here means telling the user wrong or incomplete information.\\n\\nRules:\\n- Always return valid JSON matching the schema above, regardless of the language the user writes in.\\n- If uncertain between two types, pick the one with the narrower scope (e.g. \\\"reminder\\\" over \\\"project\\\" for a one-off date-based nudge).\\n- \\\"content\\\" applies ONLY when the user wants a message/email drafted for someone else to read or receive. Analysis, summaries, jokes, and general writing that isn't addressed to a third party are NOT content \\u2014 classify those as \\\"heavy\\\" (analysis/writing work) or \\\"simple\\\" (small talk/quick request), never default to \\\"content\\\" out of uncertainty.\\n- confidence below 0.6 means the downstream system may ask the user to clarify \\u2014 only go that low when the message is genuinely ambiguous.\\n\\nUsing conversation history:\\n- You may be given a \\\"Recent conversation\\\" block before the current message \\u2014 this is the last few turns exchanged with the same user. Use it to understand short, ambiguous, or reference-dependent follow-ups.\\n- If the assistant's last message asked a clarifying/confirming question (e.g. \\\"want to create it as a new project instead?\\\", \\\"could you give me a specific date/time?\\\") and the current message answers or confirms it (e.g. \\\"yes\\\", \\\"b\\u0259li\\\", \\\"correct\\\", a specific date), classify with the SAME type as whatever the clarification was about \\u2014 don't fall back to \\\"simple\\\" just because the current message alone looks like small talk.\\n- If there's no \\\"Recent conversation\\\" block, there's no prior context \\u2014 classify the current message on its own.\\n\\nExamples:\\n\\nUser: \\\"Tbilisi bileti 20-d\\u0259 a\\u00e7\\u0131l\\u0131r, x\\u0259b\\u0259rdar et\\\"\\n{\\\"type\\\": \\\"reminder\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"date-based nudge request\\\", \\\"reply\\\": null}\\n\\nUser: \\\"what's the status of the API migration project?\\\"\\n{\\\"type\\\": \\\"status\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"asks to look up a real tracked project's status\\\", \\\"reply\\\": null}\\n\\nUser: \\\"give me my active projects\\\"\\n{\\\"type\\\": \\\"status\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"asks to list real tracked projects\\\", \\\"reply\\\": null}\\n\\nUser: \\\"I have 2 active projects, give me info\\\"\\n{\\\"type\\\": \\\"status\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"asks to list/look up real tracked projects\\\", \\\"reply\\\": null}\\n\\nUser: \\\"what reminders do I have coming up?\\\"\\n{\\\"type\\\": \\\"status\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"asks to list real stored reminders\\\", \\\"reply\\\": null}\\n\\nUser: \\\"mark the learn piano project as done\\\"\\n{\\\"type\\\": \\\"project\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"action verb 'mark as done' changes project state, this is a write not a read\\\", \\\"reply\\\": null}\\n\\nUser: \\\"start tracking a new project: redesign the onboarding flow, deadline end of August\\\"\\n{\\\"type\\\": \\\"project\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"new tracked project with deadline\\\", \\\"reply\\\": null}\\n\\nUser: \\\"write a python script that dedupes rows in a 2M-row csv efficiently\\\"\\n{\\\"type\\\": \\\"heavy\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"code generation, needs strong model\\\", \\\"reply\\\": null}\\n\\nUser: \\\"kod yaz: python-da CSV fayl\\u0131n\\u0131 Postgres-\\u0259 y\\u00fckl\\u0259y\\u0259n skript\\\"\\n{\\\"type\\\": \\\"heavy\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"code generation request, Azerbaijani phrasing\\\", \\\"reply\\\": null}\\n\\nUser: \\\"budc\\u0259 c\\u0259dv\\u0259lini analiz edib x\\u00fclas\\u0259 yaz\\\"\\n{\\\"type\\\": \\\"heavy\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"data analysis and summary, not a message to a third party\\\", \\\"reply\\\": null}\\n\\nUser: \\\"m\\u0259n\\u0259 zarafat dan\\u0131\\u015f\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"small talk, answer in English despite Azerbaijani input\\\", \\\"reply\\\": \\\"Why don't skeletons fight each other? They don't have the guts.\\\"}\\n\\nUser: \\\"tell me a joke\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"small talk, answer directly\\\", \\\"reply\\\": \\\"Why don't skeletons fight each other? They don't have the guts.\\\"}\\n\\nUser: \\\"sabahk\\u0131 hava nec\\u0259 olacaq?\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.85, \\\"reasoning\\\": \\\"quick factual question, answer in English despite Azerbaijani input\\\", \\\"reply\\\": \\\"I don't have live weather data, but you can check a weather app for tomorrow's forecast.\\\"}\\n\\nUser: \\\"what's 15% of 340?\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"quick factual question, English, answer directly\\\", \\\"reply\\\": \\\"15% of 340 is 51.\\\"}\\n\\nUser: \\\"34+30\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"arithmetic, English, answer directly\\\", \\\"reply\\\": \\\"64\\\"}\\n\\nUser: \\\"M\\u0259nim ad\\u0131m n\\u0259dir?\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"personal question about the user's identity, needs stored profile, defer\\\", \\\"reply\\\": null}\\n\\nUser: \\\"who is my manager?\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"personal question about the user's work relationships, needs stored profile, defer\\\", \\\"reply\\\": null}\\n\\nUser: \\\"what do you know about me?\\\"\\n{\\\"type\\\": \\\"simple\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"explicitly asks for stored personal info, defer\\\", \\\"reply\\\": null}\\n\\nUser: \\\"make me a 5-slide deck on Q3 results\\\"\\n{\\\"type\\\": \\\"presentation\\\", \\\"confidence\\\": 0.95, \\\"reasoning\\\": \\\"explicit slide deck request\\\", \\\"reply\\\": null}\\n\\nUser: \\\"draft an email to the landlord asking to extend the lease by 2 months\\\"\\n{\\\"type\\\": \\\"content\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"email draft for review\\\", \\\"reply\\\": null}\\n\\nUser: \\\"i\\u015f yolda\\u015f\\u0131ma mesaj yaz, sabahk\\u0131 g\\u00f6r\\u00fc\\u015f\\u00fc t\\u0259xir\\u0259 salmaq ist\\u0259yir\\u0259m\\\"\\n{\\\"type\\\": \\\"content\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"message draft addressed to a colleague\\\", \\\"reply\\\": null}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"layih\\u0259 yaratmaq ist\\u0259yir\\u0259m: yeni sayt dizayn\\u0131\\\"\\nAssistant: I couldn't find an existing project matching \\\"yeni sayt dizayn\\u0131\\\" to update. Want to create it as a new project instead?\\n\\nCurrent message: \\\"b\\u0259li, yarat\\\"\\n{\\\"type\\\": \\\"project\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"confirms creating the project discussed in the previous turn\\\", \\\"reply\\\": null}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"remind me to check the oven\\\"\\nAssistant: I got that you want a reminder for \\\"check the oven\\\" but couldn't figure out when \\u2014 could you give me a specific date/time?\\n\\nCurrent message: \\\"in 10 minutes\\\"\\n{\\\"type\\\": \\\"reminder\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"provides the missing date/time for the pending reminder\\\", \\\"reply\\\": null}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"what are my active projects?\\\"\\nAssistant: Your projects: id 1: Learn Spanish (personal, active), id 2: Redesign onboarding flow (work, active), id 3: Fix broken login bug (work, active).\\n\\nCurrent message: \\\"the last one is not a real project, remove it\\\"\\n{\\\"type\\\": \\\"project\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"deletes a specific project referenced from the previous listing\\\", \\\"reply\\\": null}\\n\\nUser: \\\"cancel the reminder to call the bank\\\"\\n{\\\"type\\\": \\\"reminder\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"deletes an existing reminder\\\", \\\"reply\\\": null}\\n\\nUser: \\\"delete project id 7\\\"\\n{\\\"type\\\": \\\"project\\\", \\\"confidence\\\": 0.9, \\\"reasoning\\\": \\\"deletes a project by explicit ID\\\", \\\"reply\\\": null}\\n\"}, {\"role\": \"user\", \"content\": {{ JSON.stringify(($json.historyText || '') + 'Current message: \"' + $json.cleanText + '\"') }}}], \"max_tokens\": 200, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -120
+      ],
+      "name": "Submit Router Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit Router Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Build History Context').item.json, routerJobId: $json.id, routerAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -120
+      ],
+      "name": "Init Router State",
+      "id": "Init Router State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -120
+      ],
+      "name": "Wait Router",
+      "webhookId": "wait-router",
+      "id": "Wait Router"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/guadc1rxe929r4/status/{{ $json.routerJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -120
+      ],
+      "name": "Check Router Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check Router Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait Router').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, routerAttempts: (prior.routerAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -120
+      ],
+      "name": "Merge Router State",
+      "id": "Merge Router State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Router Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -120
+      ],
+      "name": "Router Job Done?",
+      "id": "Router Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Router Attempts Exceeded?-cond",
+              "leftValue": "={{$json.routerAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ],
+      "name": "Router Attempts Exceeded?",
+      "id": "Router Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "simple",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "simple"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "reminder",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reminder"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "project",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "project"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "heavy",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "heavy"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "presentation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "presentation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "content",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "content"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.type}}",
+                    "rightValue": "status",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "status"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2420,
+        -120
+      ],
+      "name": "Route By Type",
+      "id": "route-by-type"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Need 14B?-cond",
+              "leftValue": "={{ $json.azMode || !$json.reply }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        -300
+      ],
+      "name": "Need 14B?",
+      "id": "Need 14B?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.message.chat.id}}",
+        "text": "={{$json.reply}}\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $json.startTime) / 1000)).toFixed(1) }}s \u00b7 no personal data used]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        -140
+      ],
+      "name": "Send Reply (3B)",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Send Reply (3B)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.message.chat.id}}",
+        "text": "=Got it \u2014 classified as *{{$json.type}}* (confidence {{$json.confidence}}). Full handling for this type isn't built yet, coming in a later phase.\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $json.startTime) / 1000)).toFixed(1) }}s \u00b7 classification only, no external model called]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        120
+      ],
+      "name": "Send Placeholder Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Send Placeholder Reply"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, localReply: $json.output[0].choices[0].message.content } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -420
+      ],
+      "name": "Extract Local Result",
+      "id": "Extract Local Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.message.chat.id}}",
+        "text": "={{$json.localReply}}\n\n_[Local \u00b7 Qwen2.5-14B \u00b7 {{ (((Date.now() - $json.startTime) / 1000)).toFixed(1) }}s \u00b7 {{ $json.ragFactsUsed > 0 ? ($json.ragFactsUsed + ' fact' + ($json.ragFactsUsed === 1 ? '' : 's') + ' from your data used') : 'no personal data used' }}]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3520,
+        -420
+      ],
+      "name": "Send Reply (14B)",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Send Reply (14B)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Sorry, the local model is still cold-starting (this can take a while after being idle). Please try again in a couple minutes.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3300,
+        -180
+      ],
+      "name": "Local Timeout Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Local Timeout Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/profile_facts/points/search",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"vector\": {{ JSON.stringify($json.output.data[0].embedding) }}, \"limit\": 3, \"with_payload\": true}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -620
+      ],
+      "name": "Query Qdrant",
+      "id": "Query Qdrant"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/conversation_memory/points/search",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"vector\": {{ JSON.stringify($('Embed Job Done?').item.json.output.data[0].embedding) }}, \"limit\": 3, \"with_payload\": true}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        -700
+      ],
+      "name": "Query Qdrant Memory",
+      "id": "Query Qdrant Memory"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Need 14B?').item.json;\nconst basePrompt = \"You are a personal AI assistant reachable via Telegram. Always reply in English, regardless of what language the user writes in (they may write in Azerbaijani, English, or a mix \\u2014 always answer in English). Keep answers short and direct, suitable for a chat message, not an essay.\\n\";\nconst profileHits = ($('Query Qdrant').item.json.result || []).map(r => r.payload && r.payload.text).filter(Boolean);\nconst memoryHits = ($json.result || []).map(r => r.payload && r.payload.text).filter(Boolean);\nconst allFacts = [...profileHits, ...memoryHits];\nconst factsBlock = allFacts.length ? ('\\n\\nRelevant facts about the user:\\n- ' + allFacts.join('\\n- ')) : '';\nreturn [{ json: { ...prior, localSystemPrompt: basePrompt + factsBlock, ragFactsUsed: allFacts.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -620
+      ],
+      "name": "Build Local Context",
+      "id": "Build Local Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Need 14B?').item.json;\nconst basePrompt = \"You are a personal AI assistant reachable via Telegram. Always reply in English, regardless of what language the user writes in (they may write in Azerbaijani, English, or a mix \\u2014 always answer in English). Keep answers short and direct, suitable for a chat message, not an essay.\\n\";\nreturn [{ json: { ...prior, localSystemPrompt: basePrompt, ragFactsUsed: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -260
+      ],
+      "name": "Embed Fallback Empty Context",
+      "id": "Embed Fallback Empty Context"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/954od6235588eo/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"model\": \"intfloat/multilingual-e5-small\", \"input\": {{ JSON.stringify('query: ' + $json.cleanText) }}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        -620
+      ],
+      "name": "Submit Embed Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit Embed Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Detect AZ Tag').item.json, embedJobId: $json.id, embedAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        -620
+      ],
+      "name": "Init Embed State",
+      "id": "Init Embed State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3300,
+        -620
+      ],
+      "name": "Wait Embed",
+      "webhookId": "wait-embed",
+      "id": "Wait Embed"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/954od6235588eo/status/{{ $json.embedJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        -620
+      ],
+      "name": "Check Embed Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check Embed Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait Embed').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, embedAttempts: (prior.embedAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -620
+      ],
+      "name": "Merge Embed State",
+      "id": "Merge Embed State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Embed Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        -620
+      ],
+      "name": "Embed Job Done?",
+      "id": "Embed Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Embed Attempts Exceeded?-cond",
+              "leftValue": "={{$json.embedAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        -400
+      ],
+      "name": "Embed Attempts Exceeded?",
+      "id": "Embed Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        -420
+      ],
+      "name": "Prep Local Submit Input",
+      "id": "Prep Local Submit Input"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/d902gj6z3zpe21/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-14B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": {{ JSON.stringify($json.localSystemPrompt) }}}, {\"role\": \"user\", \"content\": {{ JSON.stringify($json.cleanText) }}}], \"max_tokens\": 300, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        -420
+      ],
+      "name": "Submit Local Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit Local Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Prep Local Submit Input').item.json, localJobId: $json.id, localAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4380,
+        -420
+      ],
+      "name": "Init Local State",
+      "id": "Init Local State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4600,
+        -420
+      ],
+      "name": "Wait Local",
+      "webhookId": "wait-local",
+      "id": "Wait Local"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/d902gj6z3zpe21/status/{{ $json.localJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4820,
+        -420
+      ],
+      "name": "Check Local Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check Local Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait Local').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, localAttempts: (prior.localAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        -420
+      ],
+      "name": "Merge Local State",
+      "id": "Merge Local State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Local Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        -420
+      ],
+      "name": "Local Job Done?",
+      "id": "Local Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Local Attempts Exceeded?-cond",
+              "leftValue": "={{$json.localAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        -200
+      ],
+      "name": "Local Attempts Exceeded?",
+      "id": "Local Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const assistantReplyText = $json.reply;\nconst memExtractInput = 'User said: \"' + $json.cleanText + '\"\\nAssistant replied: \"' + assistantReplyText + '\"';\nreturn [{ json: { ...$json, assistantReplyText, memExtractInput } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        20
+      ],
+      "name": "Normalize Reply (3B)",
+      "id": "Normalize Reply (3B)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const assistantReplyText = $json.localReply;\nconst memExtractInput = 'User said: \"' + $json.cleanText + '\"\\nAssistant replied: \"' + assistantReplyText + '\"';\nreturn [{ json: { ...$json, assistantReplyText, memExtractInput } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        -40
+      ],
+      "name": "Normalize Reply (14B)",
+      "id": "Normalize Reply (14B)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $json }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        -140
+      ],
+      "name": "Prep MemExtract Input",
+      "id": "Prep MemExtract Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.output[0].choices[0].message.content || '').trim();\nreturn [{ json: { ...$json, extractedFact: raw } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4600,
+        20
+      ],
+      "name": "Extract MemExtract Result",
+      "id": "Extract MemExtract Result"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Memorable?-cond",
+              "leftValue": "={{$json.extractedFact}}",
+              "rightValue": "NONE",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4820,
+        20
+      ],
+      "name": "Is Memorable?",
+      "id": "Is Memorable?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5040,
+        180
+      ],
+      "name": "Nothing To Remember",
+      "id": "nothing-to-remember"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5480,
+        180
+      ],
+      "name": "Memory Embed Failed",
+      "id": "memory-embed-failed"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/guadc1rxe929r4/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-3B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a memory-extraction assistant for a personal AI agent. Given what the user said and how the assistant replied, decide whether it reveals a new fact worth remembering long-term about the user.\\n\\nWorth remembering: personal details, stated preferences, ongoing projects, relationships, plans, decisions, recurring context that would help a future conversation.\\n\\nNOT worth remembering: small talk, jokes, one-off factual/computational questions (weather, math, trivia), anything already generic or transient.\\n\\nOutput rules:\\n- If there is a fact worth remembering, output ONLY that fact as a single concise third-person sentence, always referring to the user by name as \\\"Asiman\\\" (never \\\"the user\\\" or \\\"User\\\") \\u2014 e.g. \\\"Asiman is planning a trip to Tbilisi next month.\\\"\\n- Tolerate typos and casual phrasing in the user's message \\u2014 judge the underlying meaning, not the spelling.\\n- If there is nothing worth remembering, output exactly: NONE\\n- No explanations, no markdown, no extra text \\u2014 just the fact sentence or the word NONE.\\n\\nExamples:\\n\\nUser said: \\\"what's 12*7?\\\"\\nAssistant replied: \\\"84\\\"\\nNONE\\n\\nUser said: \\\"I just started learning Spanish, wish me luck\\\"\\nAssistant replied: \\\"Good luck! Spanish is a great language to learn.\\\"\\nAsiman is learning Spanish.\\n\\nUser said: \\\"tell me a joke\\\"\\nAssistant replied: \\\"Why don't skeletons fight each other? They don't have the guts.\\\"\\nNONE\\n\\nUser said: \\\"reminder: my flight to Tbilisi is next Friday\\\"\\nAssistant replied: \\\"Got it \\u2014 classified as reminder, not built yet.\\\"\\nAsiman has a flight to Tbilisi next Friday.\\n\\nUser said: \\\"I prefer short direct answers, not long explanations\\\"\\nAssistant replied: \\\"Noted, I'll keep it short.\\\"\\nAsiman prefers short, direct answers over long explanations.\\n\\nUser said: \\\"I really ennjoy hiking on weekends\\\"\\nAssistant replied: \\\"That's great! Where do you usually go hiking?\\\"\\nAsiman enjoys hiking on weekends.\\n\\nUser said: \\\"I have a dog named Rex\\\"\\nAssistant replied: \\\"That's lovely!\\\"\\nAsiman has a dog named Rex.\\n\"}, {\"role\": \"user\", \"content\": {{ JSON.stringify($json.memExtractInput) }}}], \"max_tokens\": 100, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        20
+      ],
+      "name": "Submit MemExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit MemExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Prep MemExtract Input').item.json, memextractJobId: $json.id, memextractAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4380,
+        20
+      ],
+      "name": "Init MemExtract State",
+      "id": "Init MemExtract State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4600,
+        20
+      ],
+      "name": "Wait MemExtract",
+      "webhookId": "wait-memextract",
+      "id": "Wait MemExtract"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/guadc1rxe929r4/status/{{ $json.memextractJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4820,
+        20
+      ],
+      "name": "Check MemExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check MemExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait MemExtract').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, memextractAttempts: (prior.memextractAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        20
+      ],
+      "name": "Merge MemExtract State",
+      "id": "Merge MemExtract State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "MemExtract Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        20
+      ],
+      "name": "MemExtract Job Done?",
+      "id": "MemExtract Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "MemExtract Attempts Exceeded?-cond",
+              "leftValue": "={{$json.memextractAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        240
+      ],
+      "name": "MemExtract Attempts Exceeded?",
+      "id": "MemExtract Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, memPointId: Date.now() } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        -140
+      ],
+      "name": "Prepare Memory Upsert",
+      "id": "Prepare Memory Upsert"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/conversation_memory/points?wait=true",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"points\": [{\"id\": {{ $json.memPointId }}, \"vector\": {{ JSON.stringify($json.output.data[0].embedding) }}, \"payload\": {\"text\": {{ JSON.stringify($json.extractedFact) }}, \"source_message\": {{ JSON.stringify($json.cleanText) }}, \"created_at\": {{ JSON.stringify(new Date().toISOString()) }}}}]}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5480,
+        -140
+      ],
+      "name": "Upsert Memory Fact",
+      "id": "Upsert Memory Fact"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/954od6235588eo/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"model\": \"intfloat/multilingual-e5-small\", \"input\": {{ JSON.stringify('passage: ' + $json.extractedFact) }}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5040,
+        -60
+      ],
+      "name": "Submit MemEmbed Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit MemEmbed Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Is Memorable?').item.json, memembedJobId: $json.id, memembedAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5260,
+        -60
+      ],
+      "name": "Init MemEmbed State",
+      "id": "Init MemEmbed State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        5480,
+        -60
+      ],
+      "name": "Wait MemEmbed",
+      "webhookId": "wait-memembed",
+      "id": "Wait MemEmbed"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/954od6235588eo/status/{{ $json.memembedJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5700,
+        -60
+      ],
+      "name": "Check MemEmbed Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check MemEmbed Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait MemEmbed').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, memembedAttempts: (prior.memembedAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5920,
+        -60
+      ],
+      "name": "Merge MemEmbed State",
+      "id": "Merge MemEmbed State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "MemEmbed Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6140,
+        -60
+      ],
+      "name": "MemEmbed Job Done?",
+      "id": "MemEmbed Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "MemEmbed Attempts Exceeded?-cond",
+              "leftValue": "={{$json.memembedAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6140,
+        160
+      ],
+      "name": "MemEmbed Attempts Exceeded?",
+      "id": "MemEmbed Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst bakuTime = new Date(now.getTime() + 4 * 60 * 60 * 1000);\nconst weekday = bakuTime.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });\nconst dateStr = bakuTime.toISOString().slice(0, 10);\nconst timeStr = bakuTime.toISOString().slice(11, 16);\nconst nowStr = weekday + ', ' + dateStr + ' ' + timeStr + ' +04:00';\nconst reminderExtractInput = ($json.historyText || '') + 'Current date/time: ' + nowStr + '\\nUser message: \"' + $json.cleanText + '\"';\nreturn [{ json: { ...$json, reminderExtractInput } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        320
+      ],
+      "name": "Prep Reminder Extract Input",
+      "id": "Prep Reminder Extract Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.output[0].choices[0].message.content;\nlet parsed;\ntry { parsed = JSON.parse(raw); } catch (e) { parsed = { action: 'create', id: null, content: $json.cleanText, due_date: null }; }\nreturn [{ json: { ...$json, extractedAction: parsed.action || 'create', extractedId: parsed.id || null, extractedContent: parsed.content || null, extractedDueDate: parsed.due_date || null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        320
+      ],
+      "name": "Extract Reminder Result",
+      "id": "Extract Reminder Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Sorry, I couldn't process that reminder right now (model still cold-starting). Please try again in a minute.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3520,
+        500
+      ],
+      "name": "Reminder Extract Timeout Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Extract Timeout Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/guadc1rxe929r4/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-3B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a reminder-extraction assistant. You'll be given the current date/time and a user's message about a reminder \\u2014 creating one, updating one, or deleting one. Extract:\\n\\n- `action`: \\\"create\\\" (brand new reminder), \\\"update\\\" (change an existing reminder's content or due date), or \\\"delete\\\" (remove an existing reminder \\u2014 \\\"delete\\\", \\\"cancel\\\", \\\"remove\\\", \\\"forget that reminder\\\").\\n- `id`: an integer if the user references a specific reminder by its numeric ID (e.g. \\\"delete reminder 4\\\"), otherwise `null`. IDs are usually shown in a previous \\\"Your reminders:\\\" listing \\u2014 check conversation history for one if the current message references something like \\\"the last one\\\" right after such a listing.\\n- `content`: for \\\"create\\\", a short clear description of what to remind them about (English, regardless of input language). For \\\"update\\\"/\\\"delete\\\" without an explicit `id`, this is used to look the reminder up by its existing content \\u2014 match how it was likely originally phrased. For \\\"update\\\", if only the due_date is changing, keep this null.\\n- `due_date`: an ISO 8601 datetime with the `+04:00` (Asia/Baku) timezone offset. Resolve relative dates/times (\\\"tomorrow\\\", \\\"next Friday\\\", \\\"the 20th\\\", \\\"in 5 minutes\\\", \\\"sabah\\\") relative to the given current date/time. If a date is given but no time, default to 09:00. For \\\"create\\\", null if no date/time is mentioned at all. For \\\"update\\\", the NEW due date if changing it, else null (unchanged). Irrelevant for \\\"delete\\\".\\n- IMPORTANT \\u2014 default to TODAY, not tomorrow: if the user gives only a time (\\\"at 6pm\\\", \\\"saat 18:00-da\\\") with no day mentioned, or explicitly says \\\"today\\\"/\\\"bu g\\u00fcn\\\", use the CURRENT date from the current date/time given, not the next day. Only roll over to the next day if that exact time has already passed today, or if the user explicitly says \\\"tomorrow\\\"/\\\"sabah\\\".\\n\\nAny field you don't have information for MUST be JSON `null` \\u2014 never an empty string `\\\"\\\"`.\\n\\nOutput strict JSON only, nothing else: `{\\\"action\\\": \\\"create|update|delete\\\", \\\"id\\\": <int> or null, \\\"content\\\": \\\"...\\\" or null, \\\"due_date\\\": \\\"...\\\" or null}`\\n\\nUsing conversation history: you may be given a \\\"Recent conversation\\\" block before the current message/date.\\n- If the assistant's last message asked for a missing date/time for a reminder (e.g. \\\"couldn't figure out when \\u2014 could you give me a specific date/time?\\\") and the current message just supplies one, combine it with the reminder content from the EARLIER user message \\u2014 treat this as `action: \\\"create\\\"`.\\n- If the assistant's last message listed reminders with IDs (e.g. \\\"Your reminders: id 4: Check the oven...\\\") and the current message refers to one (\\\"the last one\\\", \\\"that reminder\\\"), resolve the `id` from that listing.\\n\\nExamples:\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"notify me in 5 minutes to go home\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Go home\\\", \\\"due_date\\\": \\\"2026-07-10T14:35:00+04:00\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"remind me to call John tomorrow at 3pm\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Call John\\\", \\\"due_date\\\": \\\"2026-07-11T15:00:00+04:00\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"Tbilisi bileti 20-d\\u0259 a\\u00e7\\u0131l\\u0131r, x\\u0259b\\u0259rdar et\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Tbilisi flight ticket opens\\\", \\\"due_date\\\": \\\"2026-07-20T09:00:00+04:00\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"remind me to water the plants\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Water the plants\\\", \\\"due_date\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"remind me today at 6pm to take out the trash\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Take out the trash\\\", \\\"due_date\\\": \\\"2026-07-10T18:00:00+04:00\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 22:00 +04:00\\nUser message: \\\"remind me at 9am to submit the report\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Submit the report\\\", \\\"due_date\\\": \\\"2026-07-11T09:00:00+04:00\\\"}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"remind me to check the oven\\\"\\nAssistant: I got that you want a reminder for \\\"check the oven\\\" but couldn't figure out when \\u2014 could you give me a specific date/time?\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"in 10 minutes\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"content\\\": \\\"Check the oven\\\", \\\"due_date\\\": \\\"2026-07-10T14:40:00+04:00\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"cancel the reminder about checking the oven\\\"\\n{\\\"action\\\": \\\"delete\\\", \\\"id\\\": null, \\\"content\\\": \\\"Check the oven\\\", \\\"due_date\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"delete reminder 4\\\"\\n{\\\"action\\\": \\\"delete\\\", \\\"id\\\": 4, \\\"content\\\": null, \\\"due_date\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"change my dentist reminder to 5pm instead\\\"\\n{\\\"action\\\": \\\"update\\\", \\\"id\\\": null, \\\"content\\\": \\\"Dentist appointment\\\", \\\"due_date\\\": \\\"2026-07-10T17:00:00+04:00\\\"}\\n\"}, {\"role\": \"user\", \"content\": {{ JSON.stringify($json.reminderExtractInput) }}}], \"max_tokens\": 150, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        320
+      ],
+      "name": "Submit ReminderExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit ReminderExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Prep Reminder Extract Input').item.json, reminderextractJobId: $json.id, reminderextractAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        320
+      ],
+      "name": "Init ReminderExtract State",
+      "id": "Init ReminderExtract State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        320
+      ],
+      "name": "Wait ReminderExtract",
+      "webhookId": "wait-reminderextract",
+      "id": "Wait ReminderExtract"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/guadc1rxe929r4/status/{{ $json.reminderextractJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        320
+      ],
+      "name": "Check ReminderExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check ReminderExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait ReminderExtract').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, reminderextractAttempts: (prior.reminderextractAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        320
+      ],
+      "name": "Merge ReminderExtract State",
+      "id": "Merge ReminderExtract State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ReminderExtract Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        320
+      ],
+      "name": "ReminderExtract Job Done?",
+      "id": "ReminderExtract Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ReminderExtract Attempts Exceeded?-cond",
+              "leftValue": "={{$json.reminderextractAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        540
+      ],
+      "name": "ReminderExtract Attempts Exceeded?",
+      "id": "ReminderExtract Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Reminder Create?-cond",
+              "leftValue": "={{$json.extractedAction}}",
+              "rightValue": "create",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        320
+      ],
+      "name": "Is Reminder Create?",
+      "id": "Is Reminder Create?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Has Due Date?-cond",
+              "leftValue": "={{ !!$json.extractedDueDate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        220
+      ],
+      "name": "Has Due Date?",
+      "id": "Has Due Date?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tasks (content, due_date) VALUES ($1, $2) RETURNING id, content, due_date;",
+        "options": {
+          "queryReplacement": "={{ [$json.extractedContent, $json.extractedDueDate] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4180,
+        120
+      ],
+      "name": "Insert Reminder",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Insert Reminder"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Got it \u2014 I'll remind you: *{{$json.content}}* at {{ new Date(new Date($json.due_date).getTime() + 4*60*60*1000).toISOString().replace('T',' ').slice(0,16) }} (Baku time).\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 stored in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        120
+      ],
+      "name": "Reminder Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Confirmed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.message.chat.id}}",
+        "text": "=I got that you want a reminder for \"{{$json.extractedContent}}\" but couldn't figure out when \u2014 could you give me a specific date/time?\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $json.startTime) / 1000)).toFixed(1) }}s]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4180,
+        320
+      ],
+      "name": "Reminder Needs Clarification",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Needs Clarification"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, content, due_date FROM tasks WHERE status != 'deleted' AND ( ($1::int IS NOT NULL AND id = $1::int) OR ($1::int IS NULL AND content ILIKE '%' || $2 || '%') ) ORDER BY id DESC LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.extractedId, $json.extractedContent] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        420
+      ],
+      "name": "Find Task (By Id or Content)",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Find Task (By Id or Content)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Task Found?-cond",
+              "leftValue": "={{ $json.id !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        420
+      ],
+      "name": "Task Found?",
+      "id": "Task Found?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Reminder Delete?-cond",
+              "leftValue": "={{ $('Extract Reminder Result').item.json.extractedAction }}",
+              "rightValue": "delete",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        380
+      ],
+      "name": "Is Reminder Delete?",
+      "id": "Is Reminder Delete?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tasks SET status = 'deleted' WHERE id = $1 RETURNING id, content;",
+        "options": {
+          "queryReplacement": "={{ [$json.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4620,
+        300
+      ],
+      "name": "Soft Delete Task",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Soft Delete Task"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Deleted reminder: *{{$json.content}}* (id {{$json.id}}).\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 soft-deleted in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        300
+      ],
+      "name": "Reminder Deleted Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Deleted Confirmed"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tasks SET content = COALESCE($2, content), due_date = COALESCE($3, due_date), remind_count = 0 WHERE id = $1 RETURNING id, content, due_date;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, $('Extract Reminder Result').item.json.extractedContent, $('Extract Reminder Result').item.json.extractedDueDate] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4620,
+        460
+      ],
+      "name": "Update Task",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Update Task"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Updated reminder (id {{$json.id}}): *{{$json.content}}*{{ $json.due_date ? (' at ' + new Date(new Date($json.due_date).getTime() + 4*60*60*1000).toISOString().replace('T',' ').slice(0,16) + ' (Baku time)') : '' }}.\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 updated in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        460
+      ],
+      "name": "Reminder Updated Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Updated Confirmed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=I couldn't find an existing reminder matching \"{{$('Extract Reminder Result').item.json.extractedContent || ('id ' + $('Extract Reminder Result').item.json.extractedId)}}\" to {{$('Extract Reminder Result').item.json.extractedAction}}.\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        560
+      ],
+      "name": "Reminder Not Found Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Reminder Not Found Reply"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst bakuTime = new Date(now.getTime() + 4 * 60 * 60 * 1000);\nconst weekday = bakuTime.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });\nconst dateStr = bakuTime.toISOString().slice(0, 10);\nconst timeStr = bakuTime.toISOString().slice(11, 16);\nconst nowStr = weekday + ', ' + dateStr + ' ' + timeStr + ' +04:00';\nconst projectExtractInput = ($json.historyText || '') + 'Current date/time: ' + nowStr + '\\nUser message: \"' + $json.cleanText + '\"';\nreturn [{ json: { ...$json, projectExtractInput } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        620
+      ],
+      "name": "Prep Project Extract Input",
+      "id": "Prep Project Extract Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.output[0].choices[0].message.content;\nlet parsed;\ntry { parsed = JSON.parse(raw); } catch (e) { parsed = { action: 'create', id: null, name: $json.cleanText, type: 'personal', description: $json.cleanText, deadline: null, status: null }; }\nreturn [{ json: { ...$json, extractedAction: parsed.action, extractedId: parsed.id || null, extractedName: parsed.name || null, extractedType: parsed.type || null, extractedDescription: parsed.description || null, extractedDeadline: parsed.deadline || null, extractedStatus: parsed.status || null } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        620
+      ],
+      "name": "Extract Project Result",
+      "id": "Extract Project Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Sorry, I couldn't process that project right now (model still cold-starting). Please try again in a minute.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3520,
+        800
+      ],
+      "name": "Project Extract Timeout Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Project Extract Timeout Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/guadc1rxe929r4/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-3B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a project-extraction assistant. You'll be given the current date/time and a user's message about a tracked project \\u2014 creating one, updating one, or deleting one. Extract:\\n\\n- `action`: \\\"create\\\" (brand new project), \\\"update\\\" (change an existing project's status, deadline, name, or description), or \\\"delete\\\" (remove an existing project \\u2014 the user says things like \\\"delete\\\", \\\"remove\\\", \\\"this was added by mistake\\\", \\\"not a real project\\\").\\n- `id`: an integer if the user references a specific project by its numeric ID (e.g. \\\"delete project 3\\\", \\\"id 5\\\"), otherwise `null`. IDs are usually shown to the user in a previous \\\"Your projects:\\\" listing \\u2014 check conversation history for one if the current message references something like \\\"the last one\\\" or \\\"that one\\\" right after such a listing.\\n- `name`: a short project title (in English, regardless of what language the message was in). For \\\"create\\\", this is the project's name. For \\\"update\\\"/\\\"delete\\\" without an explicit `id`, this is ONLY used to look the project up \\u2014 always the EXISTING name as it was likely originally created, never a new name (renaming isn't supported \\u2014 only status, deadline, and description can be changed).\\n- `type`: one of \\\"work\\\", \\\"personal\\\", or \\\"travel\\\" \\u2014 infer from context. Only relevant for \\\"create\\\".\\n- `description`: a short one-sentence description (English) for \\\"create\\\", or the NEW description if \\\"update\\\" is explicitly changing what the project is about/its content, else null.\\n- `deadline`: an ISO 8601 datetime with the `+04:00` (Asia/Baku) timezone offset. For \\\"create\\\", the deadline if mentioned, else null. For \\\"update\\\", the NEW deadline if changing it, else null (unchanged). Irrelevant for \\\"delete\\\".\\n- `status`: one of \\\"active\\\", \\\"done\\\", or \\\"paused\\\" \\u2014 ONLY for \\\"update\\\" when explicitly changing status (e.g. \\\"mark as done\\\", \\\"pause this\\\"). Otherwise null. Always null for \\\"create\\\" and \\\"delete\\\".\\n\\nOutput strict JSON only, nothing else: `{\\\"action\\\": \\\"create|update|delete\\\", \\\"id\\\": <int> or null, \\\"name\\\": \\\"...\\\", \\\"type\\\": \\\"work|personal|travel\\\", \\\"description\\\": \\\"...\\\" or null, \\\"deadline\\\": \\\"...\\\" or null, \\\"status\\\": \\\"active|done|paused\\\" or null}`\\n\\nAny field you don't have information for MUST be JSON `null` \\u2014 never an empty string `\\\"\\\"`. This matters most for \\\"delete\\\" by ID alone, where type/description/deadline/status are all unknown: use `null` for all of them, not `\\\"\\\"`.\\n\\nUsing conversation history: you may be given a \\\"Recent conversation\\\" block before the current message/date.\\n- If the assistant's last message asked you to confirm creating a project it couldn't find (e.g. \\\"couldn't find a project matching X, want to create it as new instead?\\\") and the current message confirms (\\\"yes\\\", \\\"b\\u0259li\\\"), treat this as `action: \\\"create\\\"` and pull the name/type/description/deadline from the EARLIER user message that actually described the project.\\n- If the assistant's last message listed projects with their IDs (e.g. \\\"Your projects: id 3: Kitchen renovation...\\\") and the current message refers to one of them (\\\"the last project\\\", \\\"that one\\\", \\\"id 3\\\"), resolve the correct `id` from that listing.\\n\\nExamples:\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"start tracking a new project: redesign the onboarding flow, deadline end of August\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"name\\\": \\\"Redesign onboarding flow\\\", \\\"type\\\": \\\"work\\\", \\\"description\\\": \\\"Redesign the onboarding flow\\\", \\\"deadline\\\": \\\"2026-08-31T09:00:00+04:00\\\", \\\"status\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"yeni layih\\u0259: m\\u0259tb\\u0259x t\\u0259miri, iyul sonuna q\\u0259d\\u0259r\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"name\\\": \\\"Kitchen renovation\\\", \\\"type\\\": \\\"personal\\\", \\\"description\\\": \\\"Kitchen renovation\\\", \\\"deadline\\\": \\\"2026-07-31T09:00:00+04:00\\\", \\\"status\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"planning a trip to Tbilisi next month, no fixed date yet\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"name\\\": \\\"Tbilisi trip\\\", \\\"type\\\": \\\"travel\\\", \\\"description\\\": \\\"Trip to Tbilisi, no fixed date yet\\\", \\\"deadline\\\": null, \\\"status\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"mark the onboarding redesign project as done\\\"\\n{\\\"action\\\": \\\"update\\\", \\\"id\\\": null, \\\"name\\\": \\\"Redesign onboarding flow\\\", \\\"type\\\": \\\"work\\\", \\\"description\\\": null, \\\"deadline\\\": null, \\\"status\\\": \\\"done\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"layih\\u0259ni fasil\\u0259y\\u0259 al: m\\u0259tb\\u0259x t\\u0259miri\\\"\\n{\\\"action\\\": \\\"update\\\", \\\"id\\\": null, \\\"name\\\": \\\"Kitchen renovation\\\", \\\"type\\\": \\\"personal\\\", \\\"description\\\": null, \\\"deadline\\\": null, \\\"status\\\": \\\"paused\\\"}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"push the onboarding redesign deadline to end of September\\\"\\n{\\\"action\\\": \\\"update\\\", \\\"id\\\": null, \\\"name\\\": \\\"Redesign onboarding flow\\\", \\\"type\\\": \\\"work\\\", \\\"description\\\": null, \\\"deadline\\\": \\\"2026-09-30T09:00:00+04:00\\\", \\\"status\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"update the kitchen renovation project description to: full remodel including plumbing\\\"\\n{\\\"action\\\": \\\"update\\\", \\\"id\\\": null, \\\"name\\\": \\\"Kitchen renovation\\\", \\\"type\\\": \\\"personal\\\", \\\"description\\\": \\\"Full remodel including plumbing\\\", \\\"deadline\\\": null, \\\"status\\\": null}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"yeni sayt dizayn\\u0131 haz\\u0131rlay\\u0131ram, avqustun sonuna q\\u0259d\\u0259r bitirm\\u0259liy\\u0259m\\\"\\nAssistant: I couldn't find an existing project matching \\\"yeni sayt dizayn\\u0131\\\" to update. Want to create it as a new project instead?\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"b\\u0259li, yarat\\\"\\n{\\\"action\\\": \\\"create\\\", \\\"id\\\": null, \\\"name\\\": \\\"New website design\\\", \\\"type\\\": \\\"work\\\", \\\"description\\\": \\\"New website design, due end of August\\\", \\\"deadline\\\": \\\"2026-08-31T09:00:00+04:00\\\", \\\"status\\\": null}\\n\\nRecent conversation (oldest to newest):\\nUser: \\\"what are my active projects?\\\"\\nAssistant: Your projects: id 1: Learn Spanish (personal, active), id 2: Redesign onboarding flow (work, active), id 3: Fix broken login bug (work, active).\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"the last project is not a project, it was wrongly inserted, delete it\\\"\\n{\\\"action\\\": \\\"delete\\\", \\\"id\\\": 3, \\\"name\\\": \\\"Fix broken login bug\\\", \\\"type\\\": \\\"work\\\", \\\"description\\\": null, \\\"deadline\\\": null, \\\"status\\\": null}\\n\\nCurrent date/time: Thursday, 2026-07-10 14:30 +04:00\\nUser message: \\\"delete project 5\\\"\\n{\\\"action\\\": \\\"delete\\\", \\\"id\\\": 5, \\\"name\\\": null, \\\"type\\\": null, \\\"description\\\": null, \\\"deadline\\\": null, \\\"status\\\": null}\\n\"}, {\"role\": \"user\", \"content\": {{ JSON.stringify($json.projectExtractInput) }}}], \"max_tokens\": 200, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        620
+      ],
+      "name": "Submit ProjectExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit ProjectExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Prep Project Extract Input').item.json, projectextractJobId: $json.id, projectextractAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        620
+      ],
+      "name": "Init ProjectExtract State",
+      "id": "Init ProjectExtract State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3520,
+        620
+      ],
+      "name": "Wait ProjectExtract",
+      "webhookId": "wait-projectextract",
+      "id": "Wait ProjectExtract"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/guadc1rxe929r4/status/{{ $json.projectextractJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        620
+      ],
+      "name": "Check ProjectExtract Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check ProjectExtract Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait ProjectExtract').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, projectextractAttempts: (prior.projectextractAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        620
+      ],
+      "name": "Merge ProjectExtract State",
+      "id": "Merge ProjectExtract State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ProjectExtract Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        620
+      ],
+      "name": "ProjectExtract Job Done?",
+      "id": "ProjectExtract Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ProjectExtract Attempts Exceeded?-cond",
+              "leftValue": "={{$json.projectextractAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        840
+      ],
+      "name": "ProjectExtract Attempts Exceeded?",
+      "id": "ProjectExtract Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Create?-cond",
+              "leftValue": "={{$json.extractedAction}}",
+              "rightValue": "create",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        620
+      ],
+      "name": "Is Create?",
+      "id": "Is Create?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO projects (name, type, description, deadline) VALUES ($1, $2, $3, $4) RETURNING id, name, type, description, deadline;",
+        "options": {
+          "queryReplacement": "={{ [$json.extractedName, $json.extractedType, $json.extractedDescription, $json.extractedDeadline] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        500
+      ],
+      "name": "Insert Project",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Insert Project"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Got it \u2014 tracking new *{{$json.type}}* project: *{{$json.name}}*.{{ $json.deadline ? (' Deadline: ' + new Date(new Date($json.deadline).getTime() + 4*60*60*1000).toISOString().replace('T',' ').slice(0,16) + ' (Baku time).') : '' }}\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 stored in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4180,
+        500
+      ],
+      "name": "Project Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Project Confirmed"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, type, status, deadline, description FROM projects WHERE status != 'deleted' AND ( ($1::int IS NOT NULL AND id = $1::int) OR ($1::int IS NULL AND name ILIKE '%' || $2 || '%') ) ORDER BY created_at DESC LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.extractedId, $json.extractedName] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3960,
+        740
+      ],
+      "name": "Find Project (By Id or Name)",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Find Project (By Id or Name)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Project Found?-cond",
+              "leftValue": "={{ $json.id !== undefined }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        740
+      ],
+      "name": "Project Found?",
+      "id": "Project Found?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "Is Delete?-cond",
+              "leftValue": "={{ $('Extract Project Result').item.json.extractedAction }}",
+              "rightValue": "delete",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        640
+      ],
+      "name": "Is Delete?",
+      "id": "Is Delete?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET status = 'deleted' WHERE id = $1 RETURNING id, name;",
+        "options": {
+          "queryReplacement": "={{ [$json.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4620,
+        540
+      ],
+      "name": "Soft Delete Project",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Soft Delete Project"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Deleted project: *{{$json.name}}* (id {{$json.id}}).\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 soft-deleted in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        540
+      ],
+      "name": "Project Deleted Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Project Deleted Confirmed"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET name = COALESCE($2, name), description = COALESCE($3, description), status = COALESCE($4, status), deadline = COALESCE($5, deadline) WHERE id = $1 RETURNING id, name, type, status, deadline, description;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, null, $('Extract Project Result').item.json.extractedDescription, $('Extract Project Result').item.json.extractedStatus, $('Extract Project Result').item.json.extractedDeadline] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4620,
+        740
+      ],
+      "name": "Update Project",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Update Project"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Updated *{{$json.name}}* (id {{$json.id}}) \u2014 status: *{{$json.status}}*{{ $json.deadline ? (', deadline: ' + new Date(new Date($json.deadline).getTime() + 4*60*60*1000).toISOString().replace('T',' ').slice(0,16) + ' (Baku time)') : '' }}{{ $json.description ? (', description: ' + $json.description) : '' }}.\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s \u00b7 updated in Postgres]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        740
+      ],
+      "name": "Project Updated Confirmed",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Project Updated Confirmed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=I couldn't find an existing project matching \"{{$('Extract Project Result').item.json.extractedName || ('id ' + $('Extract Project Result').item.json.extractedId)}}\" to {{$('Extract Project Result').item.json.extractedAction}}.{{ $('Extract Project Result').item.json.extractedAction === 'update' ? ' Want to create it as a new project instead?' : '' }}\n\n_[Router \u00b7 Qwen2.5-3B \u00b7 {{ (((Date.now() - $('Detect AZ Tag').item.json.startTime) / 1000)).toFixed(1) }}s]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        900
+      ],
+      "name": "Project Not Found Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Project Not Found Reply"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, type, status, deadline FROM projects WHERE status NOT IN ('done', 'deleted') ORDER BY deadline NULLS LAST;",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2860,
+        1040
+      ],
+      "name": "Get Active Projects (Status)",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Get Active Projects (Status)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, content, due_date, remind_count FROM tasks WHERE status = 'pending' ORDER BY due_date NULLS LAST;",
+        "options": {
+          "queryReplacement": "={{ [] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3080,
+        1040
+      ],
+      "name": "Get Pending Tasks (Status)",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Get Pending Tasks (Status)",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const projects = $('Get Active Projects (Status)').all().map(item => item.json).filter(p => p.name);\nconst tasks = $input.all().map(item => item.json).filter(t => t.content);\nlet data = '';\nif (projects.length) {\n  data += 'Projects:\\n';\n  for (const p of projects) {\n    const deadlineStr = p.deadline ? new Date(new Date(p.deadline).getTime() + 4*60*60*1000).toISOString().slice(0,10) : 'no deadline';\n    data += '- id ' + p.id + ': ' + p.name + ' | type: ' + p.type + ' | status: ' + p.status + ' | deadline: ' + deadlineStr + '\\n';\n  }\n} else {\n  data += 'Projects: none tracked.\\n';\n}\nif (tasks.length) {\n  data += '\\nReminders:\\n';\n  for (const t of tasks) {\n    const dueStr = t.due_date ? new Date(new Date(t.due_date).getTime() + 4*60*60*1000).toISOString().slice(0,16).replace('T',' ') + ' Baku time' : 'no due date';\n    const firedNote = t.remind_count > 0 ? ', already notified' : '';\n    data += '- id ' + t.id + ': ' + t.content + ' | due: ' + dueStr + firedNote + '\\n';\n  }\n} else {\n  data += '\\nReminders: none pending.\\n';\n}\nconst basePrompt = \"You are a personal AI assistant reachable via Telegram. Always reply in English, regardless of what language the user writes in (they may write in Azerbaijani, English, or a mix \\u2014 always answer in English). Keep answers short and direct, suitable for a chat message, not an essay.\\n\";\nconst localSystemPrompt = basePrompt + '\\n\\nThe user is asking about their real tracked projects/reminders. Here is the actual current data from the database, including each item\\'s numeric id (the user may reference these ids later to update/delete a specific item, so ALWAYS include the id when listing more than one item) \u2014 answer their specific question using ONLY this data, tailored to what they asked (don\\'t just dump everything if they asked something narrower). If the data doesn\\'t cover what they asked, say so honestly instead of guessing:\\n\\n' + data;\nreturn [{ json: { ...$('Detect AZ Tag').item.json, localSystemPrompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        1040
+      ],
+      "name": "Build Status Context",
+      "id": "Build Status Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$json, statusReplyText: $json.output[0].choices[0].message.content } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4160,
+        1040
+      ],
+      "name": "Extract Status Local Result",
+      "id": "Extract Status Local Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Detect AZ Tag').item.json.message.chat.id}}",
+        "text": "=Sorry, I fetched your data but the model that summarizes it is still cold-starting. Please try again in a couple minutes.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4160,
+        1220
+      ],
+      "name": "Status Local Timeout Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Status Local Timeout Reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.runpod.ai/v2/d902gj6z3zpe21/run",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"input\": {\"openai_route\": \"/v1/chat/completions\", \"openai_input\": {\"model\": \"Qwen/Qwen2.5-14B-Instruct\", \"messages\": [{\"role\": \"system\", \"content\": {{ JSON.stringify($json.localSystemPrompt) }}}, {\"role\": \"user\", \"content\": {{ JSON.stringify($json.cleanText) }}}], \"max_tokens\": 300, \"temperature\": 0}}}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3520,
+        1040
+      ],
+      "name": "Submit StatusLocal Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Submit StatusLocal Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$('Build Status Context').item.json, statuslocalJobId: $json.id, statuslocalAttempts: 0 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        1040
+      ],
+      "name": "Init StatusLocal State",
+      "id": "Init StatusLocal State"
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3960,
+        1040
+      ],
+      "name": "Wait StatusLocal",
+      "webhookId": "wait-statuslocal",
+      "id": "Wait StatusLocal"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.runpod.ai/v2/d902gj6z3zpe21/status/{{ $json.statuslocalJobId }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        1040
+      ],
+      "name": "Check StatusLocal Job",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hVJihjnLX8OKvWIw",
+          "name": "RunPod API"
+        }
+      },
+      "id": "Check StatusLocal Job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prior = $('Wait StatusLocal').item.json;\nreturn [{ json: { ...prior, status: $json.status, output: $json.output, statuslocalAttempts: (prior.statuslocalAttempts || 0) + 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        1040
+      ],
+      "name": "Merge StatusLocal State",
+      "id": "Merge StatusLocal State"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "StatusLocal Job Done?-cond",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "COMPLETED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        1040
+      ],
+      "name": "StatusLocal Job Done?",
+      "id": "StatusLocal Job Done?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "StatusLocal Attempts Exceeded?-cond",
+              "leftValue": "={{$json.statuslocalAttempts}}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        1260
+      ],
+      "name": "StatusLocal Attempts Exceeded?",
+      "id": "StatusLocal Attempts Exceeded?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.message.chat.id}}",
+        "text": "={{$json.statusReplyText}}\n\n_[Local \u00b7 Qwen2.5-14B \u00b7 {{ (((Date.now() - $json.startTime) / 1000)).toFixed(1) }}s \u00b7 real Postgres data used]_",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        1040
+      ],
+      "name": "Send Status Reply",
+      "credentials": {
+        "telegramApi": {
+          "id": "WYAZd7eAoSGcEFFq",
+          "name": "Telegram Bot (personal-ai-agent)"
+        }
+      },
+      "id": "Send Status Reply"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversation_log (message, response, task_type) VALUES ($1, $2, $3);",
+        "options": {
+          "queryReplacement": "={{ [$json.logMessage, $json.logResponse, $json.logTaskType] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5700,
+        0
+      ],
+      "name": "Log Conversation",
+      "credentials": {
+        "postgres": {
+          "id": "ced8rY9xb6GUVTd7",
+          "name": "Postgres (personal-ai-agent)"
+        }
+      },
+      "id": "Log Conversation"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: $json.reply, logTaskType: 'simple' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        -140
+      ],
+      "name": "Prep Log (3B)",
+      "id": "Prep Log (3B)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Classified as ' + $json.type + ', not yet handled', logTaskType: 'unbuilt' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        260
+      ],
+      "name": "Prep Log (Placeholder)",
+      "id": "Prep Log (Placeholder)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: $json.localReply, logTaskType: 'simple_14b' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -420
+      ],
+      "name": "Prep Log (14B)",
+      "id": "Prep Log (14B)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Reminder set: ' + $json.content + ' at ' + $json.due_date, logTaskType: 'reminder' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        180
+      ],
+      "name": "Prep Log (Reminder Confirmed)",
+      "id": "Prep Log (Reminder Confirmed)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Asked for date/time clarification for: ' + $json.extractedContent, logTaskType: 'reminder_clarify' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        480
+      ],
+      "name": "Prep Log (Reminder Clarify)",
+      "id": "Prep Log (Reminder Clarify)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Deleted reminder: ' + $json.content + ' (id ' + $json.id + ')', logTaskType: 'reminder_delete' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        600
+      ],
+      "name": "Prep Log (Reminder Deleted)",
+      "id": "Prep Log (Reminder Deleted)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Updated reminder: ' + $json.content + ' (id ' + $json.id + ')', logTaskType: 'reminder_update' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        700
+      ],
+      "name": "Prep Log (Reminder Updated)",
+      "id": "Prep Log (Reminder Updated)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Could not find reminder matching: ' + ($('Extract Reminder Result').item.json.extractedContent || ('id ' + $('Extract Reminder Result').item.json.extractedId)) + ' for action: ' + $('Extract Reminder Result').item.json.extractedAction, logTaskType: 'reminder_not_found' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        800
+      ],
+      "name": "Prep Log (Reminder Not Found)",
+      "id": "Prep Log (Reminder Not Found)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Created project: ' + $json.name + ' (' + $json.type + ')', logTaskType: 'project_create' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        460
+      ],
+      "name": "Prep Log (Project Confirmed)",
+      "id": "Prep Log (Project Confirmed)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Updated project: ' + $json.name + ' to status ' + $json.status, logTaskType: 'project_update' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        700
+      ],
+      "name": "Prep Log (Project Updated)",
+      "id": "Prep Log (Project Updated)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Could not find project matching: ' + ($('Extract Project Result').item.json.extractedName || ('id ' + $('Extract Project Result').item.json.extractedId)) + ' for action: ' + $('Extract Project Result').item.json.extractedAction, logTaskType: 'project_not_found' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        970
+      ],
+      "name": "Prep Log (Project Not Found)",
+      "id": "Prep Log (Project Not Found)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: 'Deleted project: ' + $json.name + ' (id ' + $json.id + ')', logTaskType: 'project_delete' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        460
+      ],
+      "name": "Prep Log (Project Deleted)",
+      "id": "Prep Log (Project Deleted)"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { logMessage: $('Detect AZ Tag').item.json.cleanText, logResponse: $json.statusReplyText, logTaskType: 'status' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        1220
+      ],
+      "name": "Prep Log (Status)",
+      "id": "Prep Log (Status)"
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Is Authorized User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Authorized User": {
+      "main": [
+        [
+          {
+            "node": "Detect AZ Tag",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect AZ Tag": {
+      "main": [
+        [
+          {
+            "node": "Get Recent History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent History": {
+      "main": [
+        [
+          {
+            "node": "Build History Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Router Job": {
+      "main": [
+        [
+          {
+            "node": "Init Router State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Router State": {
+      "main": [
+        [
+          {
+            "node": "Wait Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Router": {
+      "main": [
+        [
+          {
+            "node": "Check Router Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Router Job": {
+      "main": [
+        [
+          {
+            "node": "Merge Router State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Router State": {
+      "main": [
+        [
+          {
+            "node": "Router Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract Router Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Router Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Router Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Router Timeout Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build History Context": {
+      "main": [
+        [
+          {
+            "node": "Submit Router Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Router Result": {
+      "main": [
+        [
+          {
+            "node": "Route By Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route By Type": {
+      "main": [
+        [
+          {
+            "node": "Need 14B?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Reminder Extract Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Project Extract Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Placeholder Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Placeholder Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Placeholder Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Placeholder)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Active Projects (Status)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need 14B?": {
+      "main": [
+        [
+          {
+            "node": "Submit Embed Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply (3B)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Reply (3B)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (3B)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Embed Job": {
+      "main": [
+        [
+          {
+            "node": "Init Embed State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Embed State": {
+      "main": [
+        [
+          {
+            "node": "Wait Embed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Embed": {
+      "main": [
+        [
+          {
+            "node": "Check Embed Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Embed Job": {
+      "main": [
+        [
+          {
+            "node": "Merge Embed State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Embed State": {
+      "main": [
+        [
+          {
+            "node": "Embed Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Query Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Embed Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Embed Fallback Empty Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Embed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Query Qdrant Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Qdrant Memory": {
+      "main": [
+        [
+          {
+            "node": "Build Local Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Local Context": {
+      "main": [
+        [
+          {
+            "node": "Prep Local Submit Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Fallback Empty Context": {
+      "main": [
+        [
+          {
+            "node": "Prep Local Submit Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Local Job": {
+      "main": [
+        [
+          {
+            "node": "Init Local State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Local State": {
+      "main": [
+        [
+          {
+            "node": "Wait Local",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Local": {
+      "main": [
+        [
+          {
+            "node": "Check Local Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Local Job": {
+      "main": [
+        [
+          {
+            "node": "Merge Local State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Local State": {
+      "main": [
+        [
+          {
+            "node": "Local Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract Local Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Local Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Local Timeout Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Local",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Local Submit Input": {
+      "main": [
+        [
+          {
+            "node": "Submit Local Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Local Result": {
+      "main": [
+        [
+          {
+            "node": "Send Reply (14B)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Normalize Reply (14B)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (14B)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reply (3B)": {
+      "main": [
+        [
+          {
+            "node": "Prep MemExtract Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Reply (14B)": {
+      "main": [
+        [
+          {
+            "node": "Prep MemExtract Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit MemExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Init MemExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init MemExtract State": {
+      "main": [
+        [
+          {
+            "node": "Wait MemExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait MemExtract": {
+      "main": [
+        [
+          {
+            "node": "Check MemExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check MemExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Merge MemExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge MemExtract State": {
+      "main": [
+        [
+          {
+            "node": "MemExtract Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MemExtract Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract MemExtract Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MemExtract Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MemExtract Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Nothing To Remember",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait MemExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep MemExtract Input": {
+      "main": [
+        [
+          {
+            "node": "Submit MemExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit MemEmbed Job": {
+      "main": [
+        [
+          {
+            "node": "Init MemEmbed State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init MemEmbed State": {
+      "main": [
+        [
+          {
+            "node": "Wait MemEmbed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait MemEmbed": {
+      "main": [
+        [
+          {
+            "node": "Check MemEmbed Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check MemEmbed Job": {
+      "main": [
+        [
+          {
+            "node": "Merge MemEmbed State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge MemEmbed State": {
+      "main": [
+        [
+          {
+            "node": "MemEmbed Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MemEmbed Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Memory Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "MemEmbed Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MemEmbed Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Memory Embed Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait MemEmbed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract MemExtract Result": {
+      "main": [
+        [
+          {
+            "node": "Is Memorable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Memorable?": {
+      "main": [
+        [
+          {
+            "node": "Submit MemEmbed Job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing To Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Memory Upsert": {
+      "main": [
+        [
+          {
+            "node": "Upsert Memory Fact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit ReminderExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Init ReminderExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init ReminderExtract State": {
+      "main": [
+        [
+          {
+            "node": "Wait ReminderExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait ReminderExtract": {
+      "main": [
+        [
+          {
+            "node": "Check ReminderExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check ReminderExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Merge ReminderExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge ReminderExtract State": {
+      "main": [
+        [
+          {
+            "node": "ReminderExtract Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ReminderExtract Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract Reminder Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ReminderExtract Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ReminderExtract Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Reminder Extract Timeout Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait ReminderExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Reminder Extract Input": {
+      "main": [
+        [
+          {
+            "node": "Submit ReminderExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Reminder Result": {
+      "main": [
+        [
+          {
+            "node": "Is Reminder Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Reminder Create?": {
+      "main": [
+        [
+          {
+            "node": "Has Due Date?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Task (By Id or Content)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Due Date?": {
+      "main": [
+        [
+          {
+            "node": "Insert Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reminder Needs Clarification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Reminder Clarify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Reminder": {
+      "main": [
+        [
+          {
+            "node": "Reminder Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Reminder Confirmed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Task (By Id or Content)": {
+      "main": [
+        [
+          {
+            "node": "Task Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task Found?": {
+      "main": [
+        [
+          {
+            "node": "Is Reminder Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reminder Not Found Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Reminder Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Reminder Delete?": {
+      "main": [
+        [
+          {
+            "node": "Soft Delete Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soft Delete Task": {
+      "main": [
+        [
+          {
+            "node": "Reminder Deleted Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Reminder Deleted)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Task": {
+      "main": [
+        [
+          {
+            "node": "Reminder Updated Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Reminder Updated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit ProjectExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Init ProjectExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init ProjectExtract State": {
+      "main": [
+        [
+          {
+            "node": "Wait ProjectExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait ProjectExtract": {
+      "main": [
+        [
+          {
+            "node": "Check ProjectExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check ProjectExtract Job": {
+      "main": [
+        [
+          {
+            "node": "Merge ProjectExtract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge ProjectExtract State": {
+      "main": [
+        [
+          {
+            "node": "ProjectExtract Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ProjectExtract Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract Project Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ProjectExtract Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ProjectExtract Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Project Extract Timeout Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait ProjectExtract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Project Extract Input": {
+      "main": [
+        [
+          {
+            "node": "Submit ProjectExtract Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Project Result": {
+      "main": [
+        [
+          {
+            "node": "Is Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Create?": {
+      "main": [
+        [
+          {
+            "node": "Insert Project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Project (By Id or Name)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Project": {
+      "main": [
+        [
+          {
+            "node": "Project Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Project Confirmed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Project (By Id or Name)": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Is Delete?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Project Not Found Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Project Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Delete?": {
+      "main": [
+        [
+          {
+            "node": "Soft Delete Project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soft Delete Project": {
+      "main": [
+        [
+          {
+            "node": "Project Deleted Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Project Deleted)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Project": {
+      "main": [
+        [
+          {
+            "node": "Project Updated Confirmed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Project Updated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Projects (Status)": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Tasks (Status)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Tasks (Status)": {
+      "main": [
+        [
+          {
+            "node": "Build Status Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit StatusLocal Job": {
+      "main": [
+        [
+          {
+            "node": "Init StatusLocal State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init StatusLocal State": {
+      "main": [
+        [
+          {
+            "node": "Wait StatusLocal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait StatusLocal": {
+      "main": [
+        [
+          {
+            "node": "Check StatusLocal Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check StatusLocal Job": {
+      "main": [
+        [
+          {
+            "node": "Merge StatusLocal State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge StatusLocal State": {
+      "main": [
+        [
+          {
+            "node": "StatusLocal Job Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StatusLocal Job Done?": {
+      "main": [
+        [
+          {
+            "node": "Extract Status Local Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "StatusLocal Attempts Exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StatusLocal Attempts Exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Status Local Timeout Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait StatusLocal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Status Context": {
+      "main": [
+        [
+          {
+            "node": "Submit StatusLocal Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Status Local Result": {
+      "main": [
+        [
+          {
+            "node": "Send Status Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prep Log (Status)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (3B)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Placeholder)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (14B)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Reminder Confirmed)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Reminder Clarify)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Reminder Deleted)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Reminder Updated)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Reminder Not Found)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Project Confirmed)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Project Updated)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Project Not Found)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Project Deleted)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Log (Status)": {
+      "main": [
+        [
+          {
+            "node": "Log Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
